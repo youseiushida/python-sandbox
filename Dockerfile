@@ -1,24 +1,10 @@
-# syntax=docker/dockerfile:1
+FROM python:3.12-slim
 
-FROM golang:1.24-alpine AS build
-
-# Set destination for COPY
 WORKDIR /app
+COPY container_src/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Download any Go modules
-COPY container_src/go.mod ./
-RUN go mod download
+COPY container_src/app ./app
 
-# Copy container source code
-COPY container_src/*.go ./
-
-# Build
-RUN CGO_ENABLED=0 GOOS=linux go build -o /server
-
-FROM scratch
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=build /server /server
 EXPOSE 8080
-
-# Run
-CMD ["/server"]
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

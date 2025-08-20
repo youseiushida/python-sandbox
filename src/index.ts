@@ -1,4 +1,4 @@
-import { Container, getContainer, getRandom } from "@cloudflare/containers";
+import { Container } from "@cloudflare/containers";
 import { Hono } from "hono";
 
 export class MyContainer extends Container<Env> {
@@ -10,18 +10,25 @@ export class MyContainer extends Container<Env> {
   envVars = {
     MESSAGE: "I was passed in via the container class!",
   };
-
-  // Optional lifecycle hooks
-  override onStart() {
-    console.log("Container successfully started");
-  }
-
-  override onStop() {
-    console.log("Container successfully shut down");
-  }
-
-  override onError(error: unknown) {
-    console.log("Container error:", error);
+  async runPython(code: string) {
+    try {
+      const response = await this.containerFetch("https://container/run", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({code})
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Container responded with status: ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error("Error in runPython:", error);
+      throw error;
+    }
   }
 }
 
@@ -34,36 +41,30 @@ const app = new Hono<{
 app.get("/", (c) => {
   return c.text(
     "Available endpoints:\n" +
-      "GET /container/<ID> - Start a container for each ID with a 2m timeout\n" +
-      "GET /lb - Load balance requests over multiple containers\n" +
-      "GET /error - Start a container that errors (demonstrates error handling)\n" +
-      "GET /singleton - Get a single specific container instance",
+      "POST /sandbox/<ID> - Start a container for each ID with a 2m timeout\n" +
+      "GET /health?id=<ID> - Health check",
   );
 });
 
 // Route requests to a specific container using the container ID
-app.get("/container/:id", async (c) => {
-  const id = c.req.param("id");
+app.post("/sandbox/:id", async (c) => {
+  try {
+    const payload = await c.req.json();
+    const id = c.req.param("id");
+    const containerId = c.env.MY_CONTAINER.idFromName(`/container/${id}`);
+    const container = c.env.MY_CONTAINER.get(containerId);
+    const result = await container.runPython(payload.code);
+    return c.json(result);
+  } catch (error) {
+    console.error("Error in sandbox endpoint:", error);
+    return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+  }
+});
+
+app.get("/health", async (c) => {
+  const id = c.req.query("id");
   const containerId = c.env.MY_CONTAINER.idFromName(`/container/${id}`);
   const container = c.env.MY_CONTAINER.get(containerId);
-  return await container.fetch(c.req.raw);
-});
-
-// Demonstrate error handling - this route forces a panic in the container
-app.get("/error", async (c) => {
-  const container = getContainer(c.env.MY_CONTAINER, "error-test");
-  return await container.fetch(c.req.raw);
-});
-
-// Load balance requests across multiple containers
-app.get("/lb", async (c) => {
-  const container = await getRandom(c.env.MY_CONTAINER, 3);
-  return await container.fetch(c.req.raw);
-});
-
-// Get a single container instance (singleton pattern)
-app.get("/singleton", async (c) => {
-  const container = getContainer(c.env.MY_CONTAINER);
   return await container.fetch(c.req.raw);
 });
 
